@@ -1,15 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
 import { Scanner } from '@yudiel/react-qr-scanner'
 import Swal from 'sweetalert2'
 import logo from '../assets/images/tmc-logo.png'
 
 const getDayName = (date: Date) => {
-  return date.toLocaleDateString('id-ID', { weekday: 'long' })
+  return date.toLocaleDateString('en-US', { weekday: 'long' })
 }
 
 const getDateString = (date: Date) => {
-  return date.toLocaleDateString('id-ID', {
+  return date.toLocaleDateString('en-US', {
     day: 'numeric',
     month: 'long',
     year: 'numeric'
@@ -17,12 +17,16 @@ const getDateString = (date: Date) => {
 }
 
 function AttendancePage() {
+  const API_URL = import.meta.env.VITE_API_URL
+
   const [allAttendees, setAllAttendees] = useState<any[]>([])
   const [scannedId, setScannedId] = useState('')
+  const [manualInput, setManualInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [currentPage, setCurrentPage] = useState(1)
   const [currentTime, setCurrentTime] = useState(new Date())
   const attendeesPerPage = 10
+  const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetchAllAttendees()
@@ -34,10 +38,17 @@ function AttendancePage() {
     return () => clearInterval(timer)
   }, [])
 
+  useEffect(() => {
+    const keepFocus = setInterval(() => {
+      inputRef.current?.focus()
+    }, 500) // refresh focus setiap 0.5 detik
+  
+    return () => clearInterval(keepFocus)
+  }, [])
+
   const fetchAllAttendees = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/api/all-attendees')
-      console.log('response', response)
+      const response = await axios.get(`${API_URL}/api/all-attendees`)
       setAllAttendees(response.data.attendees)
     } catch (error) {
       console.error('Error fetching all attendees:', error)
@@ -47,29 +58,42 @@ function AttendancePage() {
   const markAttendance = async (id: string) => {
     setLoading(true)
     try {
-      await axios.post(`http://localhost:8000/api/attend/${id}`)
+      const response = await axios.post(`${API_URL}/api/attend/${id}`)
+      const attendee = allAttendees.find(a => a.UniqueID === id)
+
       Swal.fire({
         icon: 'success',
-        title: 'Berhasil!',
-        text: 'Kehadiran berhasil dicatat!',
-        timer: 1500,
+        title: 'Welcome!',
+        html: `<b>${attendee ? attendee.name : ''}</b><br>${attendee ? attendee.company : ''}<br>${attendee ? attendee.status : ''}`,
+        timer: 2000,
         showConfirmButton: false
       })
+
       fetchAllAttendees()
+      setScannedId('')
+      setManualInput('')
     } catch (error: any) {
       if (error.response && error.response.status === 400) {
         Swal.fire({
           icon: 'warning',
-          title: 'Peserta sudah hadir!',
-          text: 'QR Code ini sudah terdaftar hadir.',
+          title: 'Already Attended!',
+          text: 'This QR Code has already been registered.',
           timer: 2000,
           showConfirmButton: false
+        }).then(() => {
+          setScannedId('')
+          setManualInput('')
         })
       } else {
         Swal.fire({
           icon: 'error',
-          title: 'Gagal!',
-          text: 'Gagal mencatat kehadiran.',
+          title: 'Failed!',
+          text: 'Not Registered!',
+          timer: 1500,
+          showConfirmButton: false
+        }).then(() => {
+          setScannedId('')
+          setManualInput('')
         })
       }
       console.error('Error updating attendance:', error)
@@ -86,6 +110,13 @@ function AttendancePage() {
     }
   }
 
+  const handleManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (manualInput.trim() !== '') {
+      markAttendance(manualInput.trim())
+    }
+  }
+
   const handleError = (err: any) => {
     console.error('QR Scan Error:', err)
   }
@@ -93,8 +124,6 @@ function AttendancePage() {
   const totalDaftar = allAttendees.length
   const totalHadir = allAttendees.filter((a) => a.attended_at.Valid === true).length
   const totalBelumHadir = allAttendees.filter((a) => a.attended_at.Valid === false).length
-
-  console.log('allAttendees', allAttendees)
 
   const attendees = allAttendees.filter((a) => a.attended_at.Valid === true)
   const indexOfLast = currentPage * attendeesPerPage
@@ -134,7 +163,28 @@ function AttendancePage() {
               constraints={{ facingMode: 'environment' }}
             />
           </div>
-          {loading && <p className="text-center mt-4 text-blue-500">Mencatat kehadiran...</p>}
+
+          {/* Manual Input for QR Scanner Device */}
+          <form onSubmit={handleManualSubmit} className="w-full mt-4">
+            <input
+              type="text"
+              placeholder="Scan or Enter QR Code"
+              value={manualInput}
+              onChange={(e) => setManualInput(e.target.value)}
+              className="w-full p-3 border rounded focus:outline-none focus:ring-2 focus:ring-purple-500"
+              required
+              ref={inputRef} 
+            />
+            <button
+              type="submit"
+              className="mt-4 w-full p-3 bg-blue-500 text-white rounded hover:bg-blue-600"
+              disabled={loading}
+            >
+              {loading ? 'Recording Attendance...' : 'Submit'}
+            </button>
+          </form>
+
+          {loading && <p className="text-center mt-4 text-blue-500">Recording Attendance...</p>}
         </div>
 
         {/* Right Side: Cards and Table */}
@@ -142,41 +192,43 @@ function AttendancePage() {
           {/* Statistic Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div className="bg-white p-4 rounded-lg shadow text-center">
-              <p className="text-lg font-semibold">Total Hadir</p>
+              <p className="text-lg font-semibold">Attended</p>
               <p className="text-3xl font-bold text-green-600">{totalHadir}</p>
             </div>
             <div className="bg-white p-4 rounded-lg shadow text-center">
-              <p className="text-lg font-semibold">Belum Hadir</p>
+              <p className="text-lg font-semibold">Not Attended</p>
               <p className="text-3xl font-bold text-red-600">{totalBelumHadir}</p>
             </div>
             <div className="bg-white p-4 rounded-lg shadow text-center">
-              <p className="text-lg font-semibold">Total Peserta</p>
+              <p className="text-lg font-semibold">Total Registered</p>
               <p className="text-3xl font-bold text-blue-600">{totalDaftar}</p>
             </div>
           </div>
 
           {/* Attendance Table */}
           <div className="bg-white p-6 rounded-lg shadow-lg w-full h-full">
-            <h2 className="text-xl font-semibold mb-4">Daftar Peserta Hadir</h2>
+            <h2 className="text-xl font-semibold mb-4">Attended List</h2>
             <table className="w-full table-auto border">
               <thead>
                 <tr className="bg-gray-200">
                   <th className="p-2 border">#</th>
-                  <th className="p-2 border">Nama</th>
-                  <th className="p-2 border">Perusahaan</th>
+                  <th className="p-2 border">Name</th>
+                  <th className="p-2 border">Company</th>
+                  <th className="p-2 border">Status</th>
                 </tr>
               </thead>
               <tbody>
                 {currentAttendees.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="text-center text-gray-500 p-4">Belum ada yang hadir.</td>
+                    <td colSpan={3} className="text-center text-gray-500 p-4">No attendees found.</td>
                   </tr>
                 )}
                 {currentAttendees.map((attendee, index) => (
                   <tr key={attendee.id} className="hover:bg-gray-100">
                     <td className="p-2 border text-center">{indexOfFirst + index + 1}</td>
-                    <td className="p-2 border">{attendee.name}</td>
-                    <td className="p-2 border">{attendee.company}</td>
+                    <td className="p-2 border text-center">{attendee.name}</td>
+                    <td className="p-2 border text-center">{attendee.company}</td>
+                    <td className="p-2 border text-center">{attendee.status}</td>
                   </tr>
                 ))}
               </tbody>
